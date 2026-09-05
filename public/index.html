@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -494,26 +495,56 @@ function renderModal(){
 let leafletMap = null, leafletLayer = null;
 
 const STALE_MS = 45000; // no update in ~45s = likely stopped sharing / lost signal
+const GPS_GRACE_METERS = 15; // typical phone GPS error — don't flag someone for drifting less than this
+const OUTSIDE_CONFIRM_MS = 20000; // must read as outside continuously for 20s before it's treated as real, not a jitter blip
+
+// Tracks, per person, the moment they first appeared outside the zone.
+// Persists across renders/polls (it's declared outside any function) so the
+// 20s countdown survives normal screen refreshes.
+let outsideSinceMap = {};
+
+// Single source of truth for everyone's status, used by both the group list
+// and the map markers so they never disagree with each other.
+function computeStatuses(){
+  const now = Date.now();
+  const statuses = {}; // name -> 'stale' | 'unconfirmed' | 'out' | 'in' | 'unknown'
+  Object.entries(state.locations).forEach(([n,l])=>{
+    if(now - l.ts > STALE_MS){
+      statuses[n] = 'stale';
+      delete outsideSinceMap[n];
+      return;
+    }
+    if(!state.safety.center){
+      statuses[n] = 'unknown';
+      delete outsideSinceMap[n];
+      return;
+    }
+    const d = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng);
+    const rawOutside = d > (state.safety.radius + GPS_GRACE_METERS);
+    if(rawOutside){
+      if(!outsideSinceMap[n]) outsideSinceMap[n] = now;
+      const confirmed = (now - outsideSinceMap[n]) >= OUTSIDE_CONFIRM_MS;
+      statuses[n] = confirmed ? 'out' : 'unconfirmed'; // still shown as in-zone until confirmed
+    } else {
+      delete outsideSinceMap[n];
+      statuses[n] = 'in';
+    }
+  });
+  return statuses;
+}
 
 function renderSafetyTab(body, isAdmin){
   const me = state.currentUser.name;
   const myLoc = state.locations[me];
-  const now = Date.now();
-  const outsideNames = [];
-  const staleNames = [];
-  Object.entries(state.locations).forEach(([n,l])=>{
-    if(now - l.ts > STALE_MS){ staleNames.push(n); return; }
-    if(state.safety.center){
-      const d = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng);
-      if(d > state.safety.radius) outsideNames.push(n);
-    }
-  });
+  const statuses = computeStatuses();
+  const outsideNames = Object.entries(statuses).filter(([,s])=>s==='out').map(([n])=>n);
+  const staleNames = Object.entries(statuses).filter(([,s])=>s==='stale').map(([n])=>n);
 
   body.innerHTML = `
     <div class="panel">
       <div class="eyebrow">Live safety</div>
       <h2>${isAdmin ? 'Group map & safety radius' : 'Share your location'}</h2>
-      <p class="desc">${isAdmin ? 'The safe zone follows you live while you\'re sharing. Anyone whose phone drifts outside the radius shows up below.' : 'Turn on location sharing so your trip leader can see you\'re inside the safe zone. This only shares while this page is open.'}</p>
+      <p class="desc">${isAdmin ? 'The safe zone follows you live while you\'re sharing. Anyone outside the radius for more than 20 seconds shows up below — brief GPS drift won\'t trigger a false alert.' : 'Turn on location sharing so your trip leader can see you\'re inside the safe zone. This only shares while this page is open.'}</p>
 
       ${outsideNames.length ? `<div class="alert-banner">⚠ ${outsideNames.map(cap).join(', ')} ${outsideNames.length>1?'are':'is'} outside the safety radius.</div>` : ''}
       ${staleNames.length ? `<div class="alert-banner">📴 ${staleNames.map(cap).join(', ')} ${staleNames.length>1?'have':'has'} stopped sharing or lost signal.</div>` : ''}
@@ -536,15 +567,12 @@ function renderSafetyTab(body, isAdmin){
         <div>
           <div class="eyebrow" style="margin-bottom:8px;">Group status</div>
           <ul class="roam-list">
-            ${Object.keys(state.locations).length ? Object.entries(state.locations).map(([n,l])=>{
-              if(now - l.ts > STALE_MS){
-                return `<li><span>${cap(n)}</span><span class="badge-out" style="background:#8a8a8a;">OFFLINE</span></li>`;
-              }
-              let out = false;
-              if(state.safety.center){
-                out = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng) > state.safety.radius;
-              }
-              return `<li><span>${cap(n)}</span>${state.safety.center ? (out?'<span class="badge-out">OUTSIDE</span>':'<span class="badge-in">IN ZONE</span>') : '<span class="cred">no zone set</span>'}</li>`;
+            ${Object.keys(state.locations).length ? Object.entries(statuses).map(([n,s])=>{
+              if(s === 'stale') return `<li><span>${cap(n)}</span><span class="badge-out" style="background:#8a8a8a;">OFFLINE</span></li>`;
+              if(s === 'out') return `<li><span>${cap(n)}</span><span class="badge-out">OUTSIDE</span></li>`;
+              if(s === 'unconfirmed') return `<li><span>${cap(n)}</span><span class="badge-in" style="color:#A34E20;">CONFIRMING…</span></li>`;
+              if(s === 'unknown') return `<li><span>${cap(n)}</span><span class="cred">no zone set</span></li>`;
+              return `<li><span>${cap(n)}</span><span class="badge-in">IN ZONE</span></li>`;
             }).join('') : '<li class="empty">No one is sharing their location yet.</li>'}
           </ul>
         </div>
@@ -587,13 +615,12 @@ function initMap(myLoc){
     L.circle([state.safety.center.lat, state.safety.center.lng], { radius: state.safety.radius, color:'#3F6B4F', fillOpacity:0.08 }).addTo(leafletLayer);
     L.marker([state.safety.center.lat, state.safety.center.lng]).addTo(leafletLayer).bindPopup('Safe zone center');
   }
+  const statuses = computeStatuses();
   Object.entries(state.locations).forEach(([n,l])=>{
-    const isStale = (Date.now() - l.ts) > STALE_MS;
-    let out = false;
-    if(!isStale && state.safety.center) out = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng) > state.safety.radius;
-    const color = isStale ? '#8a8a8a' : (out ? '#B23A3A' : '#3B6EA5');
+    const s = statuses[n];
+    const color = s === 'stale' ? '#8a8a8a' : (s === 'out' ? '#B23A3A' : '#3B6EA5');
     const marker = L.circleMarker([l.lat,l.lng], { radius:8, color, fillColor: color, fillOpacity:0.9 }).addTo(leafletLayer);
-    marker.bindPopup(cap(n) + (isStale ? ' — offline' : (out ? ' — outside zone' : '')));
+    marker.bindPopup(cap(n) + (s === 'stale' ? ' — offline' : (s === 'out' ? ' — outside zone' : '')));
   });
 }
 
