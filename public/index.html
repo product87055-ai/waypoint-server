@@ -1,1 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waypoint — School Trip Planner</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
+:root{
+  --ink:#1F2A24;
+  --paper:#EDEAD9;
+  --paper-2:#E2DFC9;
+  --card:#F7F5E9;
+  --moss:#3F6B4F;
+  --moss-dark:#2E5039;
+  --trail:#C9622B;
+  --trail-dark:#A34E20;
+  --sky:#3B6EA5;
+  --alert:#B23A3A;
+  --line:#C7C2A6;
+  --display: 'Fraunces', serif;
+  --body: 'Public Sans', sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+}
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--body);
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(31,42,36,0.06) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+#app{max-width:1100px;margin:0 auto;padding:28px 20px 80px;}
+
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:26px;flex-wrap:wrap;gap:10px;}
+.brand{display:flex;align-items:center;gap:12px;}
+.brand .mark{width:40px;height:40px;flex:none;}
+.brand h1{font-family:var(--display);font-weight:700;font-size:26px;margin:0;letter-spacing:0.2px;}
+.brand .sub{font-size:12px;color:var(--moss-dark);text-transform:uppercase;letter-spacing:1.5px;font-weight:600;}
+.userbox{display:flex;align-items:center;gap:12px;font-size:14px;}
+.userbox .who{font-weight:600;}
+.userbox .role{font-family:var(--mono);font-size:11px;background:var(--moss);color:#fff;padding:3px 8px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px;}
+button{font-family:var(--body);cursor:pointer;}
+.btn{border:none;border-radius:6px;padding:10px 16px;font-weight:600;font-size:14px;background:var(--moss);color:#fff;transition:transform .08s ease, background .15s ease;}
+.btn:hover{background:var(--moss-dark);}
+.btn:active{transform:scale(0.98);}
+.btn.ghost{background:transparent;color:var(--moss-dark);border:1.5px solid var(--moss);}
+.btn.ghost:hover{background:rgba(63,107,79,0.08);}
+.btn.danger{background:var(--alert);}
+.btn.danger:hover{background:#8f2c2c;}
+.btn.small{padding:6px 11px;font-size:12.5px;}
+.btn:disabled{opacity:0.5;cursor:not-allowed;}
+
+.login-wrap{min-height:80vh;display:flex;align-items:center;justify-content:center;}
+.login-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:40px 36px;width:100%;max-width:380px;box-shadow:0 20px 50px -20px rgba(31,42,36,0.35);}
+.login-card h1{font-family:var(--display);font-size:28px;margin:0 0 4px;}
+.login-card p.tag{margin:0 0 26px;color:#5a6157;font-size:14px;}
+.field{margin-bottom:16px;}
+.field label{display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--moss-dark);margin-bottom:6px;}
+.field input, .field select, .field textarea{width:100%;padding:10px 12px;border-radius:7px;border:1.5px solid var(--line);background:#fff;font-family:var(--body);font-size:14.5px;color:var(--ink);}
+.field input:focus, .field select:focus, .field textarea:focus{outline:none;border-color:var(--moss);}
+.err{color:var(--alert);font-size:13px;margin:-6px 0 14px;min-height:16px;}
+
+.tabs{display:flex;gap:6px;margin-bottom:22px;border-bottom:1.5px solid var(--line);}
+.tab{padding:10px 16px;font-size:13.5px;font-weight:600;color:#6b7268;border-bottom:2.5px solid transparent;background:none;border-top:none;border-left:none;border-right:none;}
+.tab.active{color:var(--moss-dark);border-bottom-color:var(--trail);}
+
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px;margin-bottom:20px;}
+.panel h2{font-family:var(--display);font-size:19px;margin:0 0 4px;}
+.panel .desc{color:#666e63;font-size:13px;margin:0 0 18px;}
+
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--trail-dark);text-transform:uppercase;}
+
+.user-add-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:18px;}
+.user-add-row .field{margin-bottom:0;flex:1;min-width:150px;}
+.roster{list-style:none;margin:0;padding:0;}
+.roster li{display:flex;justify-content:space-between;align-items:center;padding:10px 4px;border-bottom:1px solid var(--line);font-size:14px;}
+.roster li:last-child{border-bottom:none;}
+.cred{font-family:var(--mono);font-size:12px;color:#6b7268;}
+
+.day-strip{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;align-items:center;}
+.day-chip{padding:8px 14px;border-radius:20px;border:1.5px solid var(--line);background:#fff;font-size:13px;font-weight:600;}
+.day-chip.active{background:var(--moss);color:#fff;border-color:var(--moss);}
+.add-day{border:1.5px dashed var(--trail);color:var(--trail-dark);background:none;border-radius:20px;padding:8px 14px;font-size:13px;font-weight:600;}
+
+.event-form{display:grid;grid-template-columns:110px 1fr;gap:10px;background:var(--paper-2);border-radius:10px;padding:16px;margin-bottom:20px;}
+.event-form .field{margin-bottom:0;}
+.event-form textarea{resize:vertical;min-height:54px;}
+
+.timeline{position:relative;padding-left:34px;}
+.timeline::before{content:"";position:absolute;left:11px;top:6px;bottom:6px;width:2px;background-image:linear-gradient(var(--trail) 60%, transparent 0%);background-size: 4px 12px;background-repeat:repeat-y;}
+.stop{position:relative;margin-bottom:22px;cursor:pointer;}
+.stop:last-child{margin-bottom:0;}
+.stop .marker{position:absolute;left:-34px;top:0;width:24px;height:24px;border-radius:50%;background:#fff;border:2.5px solid var(--trail);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;font-weight:700;color:var(--trail-dark);}
+.stop.done .marker{background:var(--moss);border-color:var(--moss);color:#fff;}
+.stop-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;transition:box-shadow .15s ease;}
+.stop-card:hover{box-shadow:0 6px 18px -10px rgba(31,42,36,0.3);}
+.stop-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
+.stop-time{font-family:var(--mono);font-size:12px;color:var(--sky);font-weight:600;}
+.stop-title{font-weight:700;font-size:15px;margin:2px 0 0;}
+.stop-desc{font-size:13px;color:#555c51;margin-top:6px;line-height:1.5;}
+.stop-photo{margin-top:10px;max-width:220px;border-radius:8px;display:block;border:1px solid var(--line);}
+.stop-actions{display:flex;gap:8px;margin-top:10px;}
+.empty{color:#7a8074;font-size:14px;padding:20px 0;text-align:center;}
+
+.safety-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+@media(max-width:760px){.safety-grid{grid-template-columns:1fr;}}
+#map{height:380px;border-radius:10px;border:1.5px solid var(--line);}
+.share-status{display:flex;align-items:center;gap:10px;padding:12px;border-radius:8px;background:var(--paper-2);margin-bottom:14px;font-size:13.5px;}
+.dot{width:9px;height:9px;border-radius:50%;background:#999;flex:none;}
+.dot.live{background:var(--moss);box-shadow:0 0 0 4px rgba(63,107,79,0.2);}
+.roam-list{list-style:none;margin:0;padding:0;}
+.roam-list li{display:flex;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--line);font-size:13.5px;}
+.roam-list li:last-child{border-bottom:none;}
+.badge-in{color:var(--moss-dark);font-family:var(--mono);font-size:11px;font-weight:700;}
+.badge-out{color:#fff;background:var(--alert);font-family:var(--mono);font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;}
+.alert-banner{background:#F7E4E4;border:1.5px solid var(--alert);color:#7a2323;padding:12px 14px;border-radius:8px;font-size:13.5px;margin-bottom:16px;font-weight:600;}
+
+.modal-bg{position:fixed;inset:0;background:rgba(31,42,36,0.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px;}
+.modal{background:#fff;border-radius:12px;padding:26px;max-width:420px;width:100%;max-height:85vh;overflow:auto;}
+.modal h3{font-family:var(--display);margin:0 0 12px;font-size:20px;}
+.modal img{width:100%;border-radius:8px;margin-top:10px;}
+.close-x{float:right;background:none;border:none;font-size:20px;color:#888;}
+
+.conn-warn{background:#F7E4E4;border:1.5px solid var(--alert);color:#7a2323;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+// Same-origin API: the Express server serves this file AND the /api routes,
+// so no need to hardcode a domain here.
+const API = '/api';
+
+async function apiGet(path, fallback){
+  try{
+    const r = await fetch(API + path);
+    if(!r.ok) return fallback;
+    return await r.json();
+  }catch(e){ console.error('GET failed', path, e); return fallback; }
+}
+async function apiSend(method, path, body){
+  try{
+    const r = await fetch(API + path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const data = await r.json().catch(()=>({}));
+    return { ok: r.ok, data };
+  }catch(e){
+    console.error(method, path, 'failed', e);
+    return { ok:false, data:{ error:'Network error — is the server reachable?' } };
+  }
+}
+
+// ---------------- state ----------------
+let state = {
+  screen: 'loading',
+  currentUser: null, // {name, role}
+  users: [],          // [{name, password, role}]
+  itinerary: [],       // [{label, events:[{id,time,title,desc,photo,done}]}]
+  safety: { center: null, radius: 500 },
+  locations: {},
+  activeDay: 0,
+  activeTab: 'itinerary',
+  loginErr: '',
+  sharing: false,
+  watchId: null,
+  modal: null,
+  offline: false,
+};
+
+async function initData(){
+  state.screen = 'login';
+  render();
+}
+
+async function refreshShared(){
+  const [users, itinerary, safety, locations] = await Promise.all([
+    apiGet('/users', state.users),
+    apiGet('/itinerary', state.itinerary),
+    apiGet('/safety', state.safety),
+    apiGet('/locations', state.locations),
+  ]);
+  state.users = users;
+  state.itinerary = itinerary;
+  state.safety = safety;
+  state.locations = locations;
+}
+
+// poll every 8s so multiple phones/browsers stay roughly in sync
+setInterval(async ()=>{
+  if(state.screen !== 'app') return;
+  await refreshShared();
+  render();
+}, 8000);
+
+// ---------------- geo helpers ----------------
+function haversine(lat1, lon1, lat2, lon2){
+  const R = 6371000;
+  const toRad = d => d * Math.PI/180;
+  const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ---------------- render ----------------
+const root = document.getElementById('app');
+
+function render(){
+  if(state.screen === 'loading'){ root.innerHTML = '<div class="login-wrap"><p>Loading…</p></div>'; return; }
+  if(state.screen === 'login'){ renderLogin(); return; }
+  renderApp();
+}
+
+function renderLogin(){
+  root.innerHTML = `
+  <div class="login-wrap">
+    <div class="login-card">
+      ${logoSvg(36)}
+      <h1 style="margin-top:14px;">Waypoint</h1>
+      <p class="tag">Sign in with the credentials your trip leader gave you.</p>
+      <div class="field"><label>Name</label><input id="li-name" autocomplete="username"></div>
+      <div class="field"><label>Password</label><input id="li-pass" type="password" autocomplete="current-password"></div>
+      <div class="err">${state.loginErr}</div>
+      <button class="btn" style="width:100%;" id="li-btn">Sign in</button>
+    </div>
+  </div>`;
+  document.getElementById('li-btn').onclick = doLogin;
+  document.getElementById('li-pass').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+}
+
+async function doLogin(){
+  const name = document.getElementById('li-name').value.trim();
+  const pass = document.getElementById('li-pass').value;
+  if(!name || !pass){ state.loginErr = 'Enter a name and password.'; render(); return; }
+  const btn = document.getElementById('li-btn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  const { ok, data } = await apiSend('POST', '/login', { name, password: pass });
+  if(!ok){
+    state.loginErr = data.error || 'Could not sign in.';
+    render();
+    return;
+  }
+  state.currentUser = { name: data.name, role: data.role };
+  state.loginErr = '';
+  state.screen = 'app';
+  state.activeTab = 'itinerary';
+  await refreshShared();
+  render();
+}
+
+function logout(){
+  stopSharing();
+  state.currentUser = null;
+  state.screen = 'login';
+  render();
+}
+
+function logoSvg(size){
+  return `<svg class="mark" width="${size}" height="${size}" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="20" cy="20" r="19" stroke="#3F6B4F" stroke-width="2"/>
+    <path d="M20 6 L20 12 M20 28 L20 34 M6 20 L12 20 M28 20 L34 20" stroke="#3F6B4F" stroke-width="1.5"/>
+    <path d="M20 20 L27 13 L23 23 L13 27 Z" fill="#C9622B"/>
+  </svg>`;
+}
+
+function renderApp(){
+  const isAdmin = state.currentUser.role === 'admin';
+  const tabs = isAdmin
+    ? [['itinerary','Itinerary'],['users','Travelers'],['safety','Safety Map']]
+    : [['itinerary','Itinerary'],['safety','Safety']];
+
+  root.innerHTML = `
+    <div class="topbar">
+      <div class="brand">
+        ${logoSvg(38)}
+        <div>
+          <h1>Waypoint</h1>
+          <div class="sub">School Trip Companion</div>
+        </div>
+      </div>
+      <div class="userbox">
+        <span class="who">${cap(state.currentUser.name)}</span>
+        <span class="role">${state.currentUser.role}</span>
+        <button class="btn ghost small" id="logout-btn">Sign out</button>
+      </div>
+    </div>
+    <div class="tabs">
+      ${tabs.map(([k,label])=>`<button class="tab ${state.activeTab===k?'active':''}" data-tab="${k}">${label}</button>`).join('')}
+    </div>
+    <div id="tab-body"></div>
+  `;
+  document.getElementById('logout-btn').onclick = logout;
+  root.querySelectorAll('.tab').forEach(btn=>{
+    btn.onclick = ()=>{ state.activeTab = btn.dataset.tab; render(); };
+  });
+
+  const body = document.getElementById('tab-body');
+  if(state.activeTab === 'itinerary') renderItineraryTab(body, isAdmin);
+  if(state.activeTab === 'users' && isAdmin) renderUsersTab(body);
+  if(state.activeTab === 'safety') renderSafetyTab(body, isAdmin);
+
+  if(state.modal) renderModal();
+}
+
+function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+function userByName(n){ return state.users.find(u=>u.name===n); }
+
+// ---------------- USERS TAB ----------------
+function renderUsersTab(body){
+  body.innerHTML = `
+    <div class="panel">
+      <div class="eyebrow">Roster</div>
+      <h2>Add a traveler</h2>
+      <p class="desc">Create a name and password for each student or chaperone. Share the credentials with them directly — they'll use them to sign in.</p>
+      <div class="user-add-row">
+        <div class="field"><label>Name</label><input id="nu-name" placeholder="e.g. Priya"></div>
+        <div class="field"><label>Password</label><input id="nu-pass" placeholder="Leave blank to auto-generate"></div>
+        <button class="btn" id="nu-add">Add traveler</button>
+      </div>
+      <div class="err" id="nu-err"></div>
+      <ul class="roster">
+        ${state.users.map(u=>`<li><span>${cap(u.name)} ${u.role==='admin'?'<span class="role" style="margin-left:6px;">admin</span>':''}</span>
+          <span class="cred">${u.role==='admin' ? '' : `pwd: ${u.password}`} ${u.role!=='admin' ? `<button class="btn ghost small" data-remove="${u.name}" style="margin-left:10px;">Remove</button>` : ''}</span></li>`).join('') || '<li class="empty">No travelers yet.</li>'}
+      </ul>
+    </div>`;
+  document.getElementById('nu-add').onclick = async ()=>{
+    const nameEl = document.getElementById('nu-name');
+    const passEl = document.getElementById('nu-pass');
+    let name = nameEl.value.trim().toLowerCase();
+    let pass = passEl.value.trim();
+    const errEl = document.getElementById('nu-err');
+    if(!name){ errEl.textContent = 'Enter a name.'; return; }
+    const { ok, data } = await apiSend('POST', '/users', { name, password: pass || undefined, role:'member' });
+    if(!ok){ errEl.textContent = data.error || 'Could not add traveler.'; return; }
+    await refreshShared();
+    render();
+  };
+  body.querySelectorAll('[data-remove]').forEach(b=>{
+    b.onclick = async ()=>{
+      await apiSend('DELETE', '/users/' + encodeURIComponent(b.dataset.remove));
+      await refreshShared();
+      render();
+    };
+  });
+}
+
+// ---------------- ITINERARY TAB ----------------
+function renderItineraryTab(body, isAdmin){
+  const day = state.itinerary[state.activeDay];
+  body.innerHTML = `
+    <div class="panel">
+      <div class="eyebrow">Route</div>
+      <h2>Trip itinerary</h2>
+      <p class="desc">${isAdmin ? 'Add days and drop waypoints on the timeline — tap a stop to add its story and photo.' : 'Tap any stop on the timeline to see the details.'}</p>
+      <div class="day-strip" id="day-strip"></div>
+      <div id="day-content"></div>
+    </div>`;
+
+  const strip = document.getElementById('day-strip');
+  state.itinerary.forEach((d, i)=>{
+    const chip = document.createElement('button');
+    chip.className = 'day-chip' + (i===state.activeDay ? ' active' : '');
+    chip.textContent = d.label;
+    chip.onclick = ()=>{ state.activeDay = i; render(); };
+    strip.appendChild(chip);
+  });
+  if(isAdmin){
+    const addBtn = document.createElement('button');
+    addBtn.className = 'add-day';
+    addBtn.textContent = '+ Add day';
+    addBtn.onclick = async ()=>{
+      state.itinerary.push({ label: `Day ${state.itinerary.length+1}`, events: [] });
+      state.activeDay = state.itinerary.length - 1;
+      await apiSend('PUT', '/itinerary', { days: state.itinerary });
+      render();
+    };
+    strip.appendChild(addBtn);
+  }
+
+  const content = document.getElementById('day-content');
+  if(!day){ content.innerHTML = '<div class="empty">No days added yet.</div>'; return; }
+
+  let html = '';
+  if(isAdmin){
+    html += `
+    <div class="event-form">
+      <div class="field"><label>Time</label><input id="ev-time" placeholder="09:30"></div>
+      <div class="field"><label>Stop title</label><input id="ev-title" placeholder="Depart from school gate"></div>
+      <div class="field" style="grid-column:1/-1;"><label>Description</label><textarea id="ev-desc" placeholder="What happens here, meeting point, notes…"></textarea></div>
+      <div class="field" style="grid-column:1/-1;"><label>Photo (optional)</label><input type="file" id="ev-photo" accept="image/*"></div>
+      <div style="grid-column:1/-1;"><button class="btn" id="ev-add">Add to timeline</button></div>
+    </div>`;
+  }
+  html += `<div class="timeline">${
+    day.events.length ? day.events.map((e,idx)=>`
+      <div class="stop ${e.done?'done':''}" data-idx="${idx}">
+        <div class="marker">${idx+1}</div>
+        <div class="stop-card">
+          <div class="stop-top"><div><div class="stop-time">${e.time||''}</div><div class="stop-title">${e.title}</div></div></div>
+          ${e.desc ? `<div class="stop-desc">${e.desc.length>90 ? e.desc.slice(0,90)+'…':e.desc}</div>` : ''}
+        </div>
+      </div>`).join('')
+    : '<div class="empty">No stops on this day yet.</div>'
+  }</div>`;
+  content.innerHTML = html;
+
+  content.querySelectorAll('.stop').forEach(el=>{
+    el.onclick = (ev)=>{
+      if(ev.target.closest('.event-form')) return;
+      state.modal = { dayIdx: state.activeDay, evIdx: Number(el.dataset.idx) };
+      render();
+    };
+  });
+
+  if(isAdmin){
+    document.getElementById('ev-add').onclick = async ()=>{
+      const time = document.getElementById('ev-time').value.trim();
+      const title = document.getElementById('ev-title').value.trim();
+      const desc = document.getElementById('ev-desc').value.trim();
+      const fileInput = document.getElementById('ev-photo');
+      if(!title) return;
+      let photo = null;
+      if(fileInput.files[0]){
+        photo = await fileToDataUrl(fileInput.files[0]);
+      }
+      day.events.push({ id: Date.now()+'', time, title, desc, photo, done:false });
+      day.events.sort((a,b)=> (a.time||'').localeCompare(b.time||''));
+      await apiSend('PUT', '/itinerary', { days: state.itinerary });
+      render();
+    };
+  }
+}
+
+function fileToDataUrl(file){
+  return new Promise((resolve,reject)=>{
+    const r = new FileReader();
+    r.onload = ()=>resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+function renderModal(){
+  const { dayIdx, evIdx } = state.modal;
+  const e = state.itinerary[dayIdx].events[evIdx];
+  const isAdmin = state.currentUser.role === 'admin';
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `
+    <div class="modal">
+      <button class="close-x" id="modal-close">×</button>
+      <div class="stop-time">${e.time||''}</div>
+      <h3>${e.title}</h3>
+      <p class="stop-desc">${e.desc || '<em>No description added.</em>'}</p>
+      ${e.photo ? `<img src="${e.photo}">` : ''}
+      ${isAdmin ? `<div style="margin-top:16px;display:flex;gap:8px;">
+        <button class="btn small" id="modal-done">${e.done ? 'Mark as not visited' : 'Mark as visited'}</button>
+        <button class="btn danger small" id="modal-del">Remove stop</button>
+      </div>` : ''}
+    </div>`;
+  document.body.appendChild(bg);
+  const close = ()=>{ state.modal = null; document.body.removeChild(bg); };
+  bg.onclick = (ev)=>{ if(ev.target===bg) close(); };
+  document.getElementById('modal-close').onclick = close;
+  if(isAdmin){
+    document.getElementById('modal-done').onclick = async ()=>{
+      e.done = !e.done;
+      await apiSend('PUT', '/itinerary', { days: state.itinerary });
+      close(); render();
+    };
+    document.getElementById('modal-del').onclick = async ()=>{
+      state.itinerary[dayIdx].events.splice(evIdx,1);
+      await apiSend('PUT', '/itinerary', { days: state.itinerary });
+      close(); render();
+    };
+  }
+}
+
+// ---------------- SAFETY TAB ----------------
+let leafletMap = null, leafletLayer = null;
+
+function renderSafetyTab(body, isAdmin){
+  const me = state.currentUser.name;
+  const myLoc = state.locations[me];
+  const outsideNames = [];
+  Object.entries(state.locations).forEach(([n,l])=>{
+    if(state.safety.center){
+      const d = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng);
+      if(d > state.safety.radius) outsideNames.push(n);
+    }
+  });
+
+  body.innerHTML = `
+    <div class="panel">
+      <div class="eyebrow">Live safety</div>
+      <h2>${isAdmin ? 'Group map & safety radius' : 'Share your location'}</h2>
+      <p class="desc">${isAdmin ? 'Set a safe zone around your group. Anyone whose phone drifts outside the radius shows up below.' : 'Turn on location sharing so your trip leader can see you\'re inside the safe zone. This only shares while this page is open.'}</p>
+
+      ${outsideNames.length ? `<div class="alert-banner">⚠ ${outsideNames.map(cap).join(', ')} ${outsideNames.length>1?'are':'is'} outside the safety radius.</div>` : ''}
+
+      <div class="share-status">
+        <span class="dot ${state.sharing?'live':''}"></span>
+        <span>${state.sharing ? 'Sharing your location live' : 'Location sharing is off'}</span>
+        <button class="btn ${state.sharing?'danger':''} small" id="share-toggle" style="margin-left:auto;">${state.sharing?'Stop sharing':'Start sharing'}</button>
+      </div>
+
+      ${isAdmin ? `
+      <div class="user-add-row" style="margin-bottom:10px;">
+        <button class="btn ghost small" id="set-center">Use my current location as the center</button>
+        <div class="field" style="max-width:140px;"><label>Radius (m)</label><input id="radius-input" type="number" value="${state.safety.radius}"></div>
+        <button class="btn small" id="save-radius">Save radius</button>
+      </div>` : ''}
+
+      <div class="safety-grid">
+        <div id="map"></div>
+        <div>
+          <div class="eyebrow" style="margin-bottom:8px;">Group status</div>
+          <ul class="roam-list">
+            ${Object.keys(state.locations).length ? Object.entries(state.locations).map(([n,l])=>{
+              let out = false;
+              if(state.safety.center){
+                out = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng) > state.safety.radius;
+              }
+              return `<li><span>${cap(n)}</span>${state.safety.center ? (out?'<span class="badge-out">OUTSIDE</span>':'<span class="badge-in">IN ZONE</span>') : '<span class="cred">no zone set</span>'}</li>`;
+            }).join('') : '<li class="empty">No one is sharing their location yet.</li>'}
+          </ul>
+        </div>
+      </div>
+    </div>`;
+
+  document.getElementById('share-toggle').onclick = ()=> state.sharing ? stopSharing() : startSharing();
+
+  if(isAdmin){
+    document.getElementById('set-center').onclick = ()=>{
+      navigator.geolocation.getCurrentPosition(async pos=>{
+        state.safety.center = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        await apiSend('PUT', '/safety', state.safety);
+        render();
+      }, err=>{ alert('Could not get your location: ' + err.message); });
+    };
+    document.getElementById('save-radius').onclick = async ()=>{
+      const v = Number(document.getElementById('radius-input').value);
+      if(v > 0){ state.safety.radius = v; await apiSend('PUT', '/safety', state.safety); render(); }
+    };
+  }
+
+  setTimeout(()=>initMap(myLoc), 0);
+}
+
+function initMap(myLoc){
+  const container = document.getElementById('map');
+  if(!container) return;
+  if(leafletMap){
+    try{ leafletMap.remove(); }catch(e){ /* already gone, ignore */ }
+    leafletMap = null;
+    leafletLayer = null;
+  }
+  const centerPoint = state.safety.center || myLoc || { lat: 28.6139, lng: 77.2090 };
+  leafletMap = L.map('map').setView([centerPoint.lat, centerPoint.lng], 15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(leafletMap);
+  leafletLayer = L.layerGroup().addTo(leafletMap);
+
+  if(state.safety.center){
+    L.circle([state.safety.center.lat, state.safety.center.lng], { radius: state.safety.radius, color:'#3F6B4F', fillOpacity:0.08 }).addTo(leafletLayer);
+    L.marker([state.safety.center.lat, state.safety.center.lng]).addTo(leafletLayer).bindPopup('Safe zone center');
+  }
+  Object.entries(state.locations).forEach(([n,l])=>{
+    let out = false;
+    if(state.safety.center) out = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng) > state.safety.radius;
+    const marker = L.circleMarker([l.lat,l.lng], { radius:8, color: out ? '#B23A3A' : '#3B6EA5', fillColor: out ? '#B23A3A' : '#3B6EA5', fillOpacity:0.9 }).addTo(leafletLayer);
+    marker.bindPopup(cap(n) + (out ? ' — outside zone' : ''));
+  });
+}
+
+let lastLocSent = 0;
+function startSharing(){
+  if(!navigator.geolocation){ alert('Geolocation is not supported on this device.'); return; }
+  state.sharing = true;
+  state.watchId = navigator.geolocation.watchPosition(async pos=>{
+    const now = Date.now();
+    if(now - lastLocSent < 6000) return;
+    lastLocSent = now;
+    state.locations[state.currentUser.name] = { lat: pos.coords.latitude, lng: pos.coords.longitude, ts: now };
+    await apiSend('PUT', '/locations/' + encodeURIComponent(state.currentUser.name), {
+      lat: pos.coords.latitude, lng: pos.coords.longitude,
+    });
+    if(state.activeTab === 'safety') render();
+  }, err=>{
+    console.error(err);
+    alert('Location error: ' + err.message);
+    stopSharing();
+  }, { enableHighAccuracy:true, maximumAge:5000 });
+  render();
+}
+
+function stopSharing(){
+  if(state.watchId !== null) navigator.geolocation.clearWatch(state.watchId);
+  state.watchId = null;
+  state.sharing = false;
+  render();
+}
+
+initData();
+</script>
+</body>
+</html>
