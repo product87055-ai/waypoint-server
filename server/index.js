@@ -94,6 +94,11 @@ app.put('/api/locations/:name', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.delete('/api/locations/:name', async (req, res) => {
+  await pool.query('DELETE FROM locations WHERE name = $1', [req.params.name.toLowerCase()]);
+  res.json({ ok: true });
+});
+
 // ---------- Serve the front-end ----------
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.get('*', (req, res) => {
@@ -109,4 +114,3 @@ initSchema()
     console.error('Failed to set up database schema:', err);
     process.exit(1);
   });
-
