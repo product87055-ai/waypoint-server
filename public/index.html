@@ -195,8 +195,17 @@ async function refreshShared(){
   state.locations = locations;
 }
 
-// poll every 8s so multiple phones/browsers stay roughly in sync
-setInterval(async ()=>{ if(state.screen !== 'app') return; const active = document.activeElement; const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && root.contains(active); if(isTyping) return; await refreshShared(); render(); }, 8000);
+// poll every 8s so multiple phones/browsers stay roughly in sync —
+// but skip it while someone is actively typing, so a mid-refresh doesn't
+// wipe out a form they haven't submitted yet.
+setInterval(async ()=>{
+  if(state.screen !== 'app') return;
+  const active = document.activeElement;
+  const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && root.contains(active);
+  if(isTyping) return;
+  await refreshShared();
+  render();
+}, 8000);
 
 // ---------------- geo helpers ----------------
 function haversine(lat1, lon1, lat2, lon2){
@@ -484,11 +493,16 @@ function renderModal(){
 // ---------------- SAFETY TAB ----------------
 let leafletMap = null, leafletLayer = null;
 
+const STALE_MS = 45000; // no update in ~45s = likely stopped sharing / lost signal
+
 function renderSafetyTab(body, isAdmin){
   const me = state.currentUser.name;
   const myLoc = state.locations[me];
+  const now = Date.now();
   const outsideNames = [];
+  const staleNames = [];
   Object.entries(state.locations).forEach(([n,l])=>{
+    if(now - l.ts > STALE_MS){ staleNames.push(n); return; }
     if(state.safety.center){
       const d = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng);
       if(d > state.safety.radius) outsideNames.push(n);
@@ -499,9 +513,10 @@ function renderSafetyTab(body, isAdmin){
     <div class="panel">
       <div class="eyebrow">Live safety</div>
       <h2>${isAdmin ? 'Group map & safety radius' : 'Share your location'}</h2>
-      <p class="desc">${isAdmin ? 'Set a safe zone around your group. Anyone whose phone drifts outside the radius shows up below.' : 'Turn on location sharing so your trip leader can see you\'re inside the safe zone. This only shares while this page is open.'}</p>
+      <p class="desc">${isAdmin ? 'The safe zone follows you live while you\'re sharing. Anyone whose phone drifts outside the radius shows up below.' : 'Turn on location sharing so your trip leader can see you\'re inside the safe zone. This only shares while this page is open.'}</p>
 
       ${outsideNames.length ? `<div class="alert-banner">⚠ ${outsideNames.map(cap).join(', ')} ${outsideNames.length>1?'are':'is'} outside the safety radius.</div>` : ''}
+      ${staleNames.length ? `<div class="alert-banner">📴 ${staleNames.map(cap).join(', ')} ${staleNames.length>1?'have':'has'} stopped sharing or lost signal.</div>` : ''}
 
       <div class="share-status">
         <span class="dot ${state.sharing?'live':''}"></span>
@@ -522,6 +537,9 @@ function renderSafetyTab(body, isAdmin){
           <div class="eyebrow" style="margin-bottom:8px;">Group status</div>
           <ul class="roam-list">
             ${Object.keys(state.locations).length ? Object.entries(state.locations).map(([n,l])=>{
+              if(now - l.ts > STALE_MS){
+                return `<li><span>${cap(n)}</span><span class="badge-out" style="background:#8a8a8a;">OFFLINE</span></li>`;
+              }
               let out = false;
               if(state.safety.center){
                 out = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng) > state.safety.radius;
@@ -570,10 +588,12 @@ function initMap(myLoc){
     L.marker([state.safety.center.lat, state.safety.center.lng]).addTo(leafletLayer).bindPopup('Safe zone center');
   }
   Object.entries(state.locations).forEach(([n,l])=>{
+    const isStale = (Date.now() - l.ts) > STALE_MS;
     let out = false;
-    if(state.safety.center) out = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng) > state.safety.radius;
-    const marker = L.circleMarker([l.lat,l.lng], { radius:8, color: out ? '#B23A3A' : '#3B6EA5', fillColor: out ? '#B23A3A' : '#3B6EA5', fillOpacity:0.9 }).addTo(leafletLayer);
-    marker.bindPopup(cap(n) + (out ? ' — outside zone' : ''));
+    if(!isStale && state.safety.center) out = haversine(l.lat,l.lng,state.safety.center.lat,state.safety.center.lng) > state.safety.radius;
+    const color = isStale ? '#8a8a8a' : (out ? '#B23A3A' : '#3B6EA5');
+    const marker = L.circleMarker([l.lat,l.lng], { radius:8, color, fillColor: color, fillOpacity:0.9 }).addTo(leafletLayer);
+    marker.bindPopup(cap(n) + (isStale ? ' — offline' : (out ? ' — outside zone' : '')));
   });
 }
 
@@ -589,6 +609,13 @@ function startSharing(){
     await apiSend('PUT', '/locations/' + encodeURIComponent(state.currentUser.name), {
       lat: pos.coords.latitude, lng: pos.coords.longitude,
     });
+    // While the admin is sharing, the safe zone follows them live instead of
+    // staying pinned to wherever it was first set — so the admin is never
+    // flagged as "outside" their own zone just for having walked around.
+    if(state.currentUser.role === 'admin'){
+      state.safety.center = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      await apiSend('PUT', '/safety', state.safety);
+    }
     if(state.activeTab === 'safety') render();
   }, err=>{
     console.error(err);
@@ -602,6 +629,10 @@ function stopSharing(){
   if(state.watchId !== null) navigator.geolocation.clearWatch(state.watchId);
   state.watchId = null;
   state.sharing = false;
+  // Remove the marker immediately rather than leaving a stale, frozen dot
+  // that looks identical to someone still actively sharing.
+  delete state.locations[state.currentUser.name];
+  apiSend('DELETE', '/locations/' + encodeURIComponent(state.currentUser.name));
   render();
 }
 
