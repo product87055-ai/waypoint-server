@@ -196,11 +196,7 @@ async function refreshShared(){
 }
 
 // poll every 8s so multiple phones/browsers stay roughly in sync
-setInterval(async ()=>{
-  if(state.screen !== 'app') return;
-  await refreshShared();
-  render();
-}, 8000);
+setInterval(async ()=>{ if(state.screen !== 'app') return; const active = document.activeElement; const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA') && root.contains(active); if(isTyping) return; await refreshShared(); render(); }, 8000);
 
 // ---------------- geo helpers ----------------
 function haversine(lat1, lon1, lat2, lon2){
