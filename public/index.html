@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Waypoint — School Trip Planner</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/3.6.2/maplibre-gl.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/3.6.2/maplibre-gl.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -640,6 +640,12 @@ function initMap(myLoc){
     });
     mapInstance.addControl(new maplibregl.NavigationControl(), 'top-right');
     mapInstance.on('load', ()=>{ mapLoaded = true; updateMapOverlays(); });
+    mapInstance.on('error', (e)=>{
+      console.error('Map failed to load:', e);
+      if(mapContainerEl && !mapLoaded){
+        mapContainerEl.innerHTML = '<div style="padding:16px;color:#7a2323;font-size:13px;">Map failed to load — check your internet connection and reload the page.</div>';
+      }
+    });
   }
 
   // ...then, on every render, just move that same persistent div into the
