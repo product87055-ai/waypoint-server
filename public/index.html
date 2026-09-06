@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -492,25 +491,13 @@ function renderModal(){
 }
 
 // ---------------- SAFETY TAB ----------------
+// The map is created exactly once and kept alive across renders (see initMap
+// below) — mapContainerEl is its persistent, detached DOM node; mapMarkers
+// tracks its current markers so they can be cleared and redrawn cheaply.
 let mapInstance = null;
-
-// MapLibre draws circles in pixels, not meters, so a true "radius in meters"
-// safe zone has to be built as a polygon ring of points around the center —
-// this computes that ring using the standard spherical destination-point formula.
-function destinationPoint(lat, lng, distanceM, bearingDeg){
-  const R = 6371000;
-  const δ = distanceM / R;
-  const θ = bearingDeg * Math.PI/180;
-  const φ1 = lat * Math.PI/180, λ1 = lng * Math.PI/180;
-  const φ2 = Math.asin(Math.sin(φ1)*Math.cos(δ) + Math.cos(φ1)*Math.sin(δ)*Math.cos(θ));
-  const λ2 = λ1 + Math.atan2(Math.sin(θ)*Math.sin(δ)*Math.cos(φ1), Math.cos(δ)-Math.sin(φ1)*Math.sin(φ2));
-  return [ λ2*180/Math.PI, φ2*180/Math.PI ]; // [lng, lat] — GeoJSON coordinate order
-}
-function circleRingCoords(lat, lng, radiusM, points=72){
-  const ring = [];
-  for(let i=0;i<=points;i++){ ring.push(destinationPoint(lat, lng, radiusM, i*360/points)); }
-  return ring;
-}
+let mapContainerEl = null;
+let mapLoaded = false;
+let mapMarkers = [];
 
 const STALE_MS = 45000; // no update in ~45s = likely stopped sharing / lost signal
 const GPS_GRACE_METERS = 15; // typical phone GPS error — don't flag someone for drifting less than this
@@ -632,49 +619,72 @@ function makeCircleCoords(centerLat, centerLng, radiusMeters, points){
 }
 
 function initMap(myLoc){
-  const container = document.getElementById('map');
-  if(!container) return;
-  if(mapInstance){
-    try{ mapInstance.remove(); }catch(e){ /* already gone, ignore */ }
-    mapInstance = null;
-  }
+  const slot = document.getElementById('map');
+  if(!slot) return;
   const centerPoint = state.safety.center || myLoc || { lat: 28.6139, lng: 77.2090 };
 
-  // Free vector tiles, no API key or signup — this is what makes panning/zooming
-  // feel smooth and continuous rather than the tile "pop-in" of raster maps.
-  mapInstance = new maplibregl.Map({
-    container: 'map',
-    style: 'https://tiles.openfreemap.org/styles/liberty',
-    center: [centerPoint.lng, centerPoint.lat],
-    zoom: 15,
-  });
-  mapInstance.addControl(new maplibregl.NavigationControl(), 'top-right');
-
-  mapInstance.on('load', ()=>{
-    if(state.safety.center){
-      const circleCoords = makeCircleCoords(state.safety.center.lat, state.safety.center.lng, state.safety.radius);
-      mapInstance.addSource('safety-circle', {
-        type: 'geojson',
-        data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [circleCoords] } }
-      });
-      mapInstance.addLayer({ id: 'safety-circle-fill', type: 'fill', source: 'safety-circle', paint: { 'fill-color': '#3F6B4F', 'fill-opacity': 0.12 } });
-      mapInstance.addLayer({ id: 'safety-circle-line', type: 'line', source: 'safety-circle', paint: { 'line-color': '#3F6B4F', 'line-width': 2 } });
-
-      new maplibregl.Marker({ color: '#3F6B4F' })
-        .setLngLat([state.safety.center.lng, state.safety.center.lat])
-        .setPopup(new maplibregl.Popup().setText('Safe zone center'))
-        .addTo(mapInstance);
-    }
-
-    const statuses = computeStatuses();
-    Object.entries(state.locations).forEach(([n,l])=>{
-      const s = statuses[n];
-      const color = s === 'stale' ? '#8a8a8a' : (s === 'out' ? '#B23A3A' : '#3B6EA5');
-      new maplibregl.Marker({ color })
-        .setLngLat([l.lng, l.lat])
-        .setPopup(new maplibregl.Popup().setText(cap(n) + (s === 'stale' ? ' — offline' : (s === 'out' ? ' — outside zone' : ''))))
-        .addTo(mapInstance);
+  if(!mapInstance){
+    // Create the map exactly once, ever. MapLibre uses WebGL, and browsers
+    // only allow a small number of WebGL contexts open at a time — recreating
+    // the map on every refresh (which is what fixed the earlier Leaflet bug)
+    // was silently exhausting that limit here, leaving a blank box after a
+    // few refreshes. So instead: build it once, into its own detached div...
+    mapContainerEl = document.createElement('div');
+    mapContainerEl.style.width = '100%';
+    mapContainerEl.style.height = '100%';
+    mapInstance = new maplibregl.Map({
+      container: mapContainerEl,
+      style: 'https://tiles.openfreemap.org/styles/liberty',
+      center: [centerPoint.lng, centerPoint.lat],
+      zoom: 15,
     });
+    mapInstance.addControl(new maplibregl.NavigationControl(), 'top-right');
+    mapInstance.on('load', ()=>{ mapLoaded = true; updateMapOverlays(); });
+  }
+
+  // ...then, on every render, just move that same persistent div into the
+  // freshly-rebuilt slot. This does NOT destroy the WebGL context — only
+  // literally removing a node and letting it be garbage-collected does that.
+  slot.innerHTML = '';
+  slot.appendChild(mapContainerEl);
+  mapInstance.resize();
+  updateMapOverlays();
+}
+
+function updateMapOverlays(){
+  if(!mapInstance || !mapLoaded) return;
+
+  // Markers are lightweight DOM elements, not WebGL — safe to clear and
+  // redraw every time, unlike the map itself.
+  mapMarkers.forEach(m=>m.remove());
+  mapMarkers = [];
+
+  if(state.safety.center){
+    const circleCoords = makeCircleCoords(state.safety.center.lat, state.safety.center.lng, state.safety.radius);
+    const circleData = { type:'Feature', geometry:{ type:'Polygon', coordinates:[circleCoords] } };
+    if(mapInstance.getSource('safety-circle')){
+      mapInstance.getSource('safety-circle').setData(circleData);
+    } else {
+      mapInstance.addSource('safety-circle', { type:'geojson', data: circleData });
+      mapInstance.addLayer({ id:'safety-circle-fill', type:'fill', source:'safety-circle', paint:{ 'fill-color':'#3F6B4F', 'fill-opacity':0.12 } });
+      mapInstance.addLayer({ id:'safety-circle-line', type:'line', source:'safety-circle', paint:{ 'line-color':'#3F6B4F', 'line-width':2 } });
+    }
+    const centerMarker = new maplibregl.Marker({ color:'#3F6B4F' })
+      .setLngLat([state.safety.center.lng, state.safety.center.lat])
+      .setPopup(new maplibregl.Popup().setText('Safe zone center'))
+      .addTo(mapInstance);
+    mapMarkers.push(centerMarker);
+  }
+
+  const statuses = computeStatuses();
+  Object.entries(state.locations).forEach(([n,l])=>{
+    const s = statuses[n];
+    const color = s === 'stale' ? '#8a8a8a' : (s === 'out' ? '#B23A3A' : '#3B6EA5');
+    const marker = new maplibregl.Marker({ color })
+      .setLngLat([l.lng, l.lat])
+      .setPopup(new maplibregl.Popup().setText(cap(n) + (s === 'stale' ? ' — offline' : (s === 'out' ? ' — outside zone' : ''))))
+      .addTo(mapInstance);
+    mapMarkers.push(marker);
   });
 }
 
