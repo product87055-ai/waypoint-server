@@ -5,8 +5,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Waypoint — School Trip Planner</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/3.6.2/maplibre-gl.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/3.6.2/maplibre-gl.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -111,7 +111,7 @@ button{font-family:var(--body);cursor:pointer;}
 
 .safety-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
 @media(max-width:760px){.safety-grid{grid-template-columns:1fr;}}
-#map{height:380px;border-radius:10px;border:1.5px solid var(--line);}
+#map{height:380px;border-radius:10px;border:1.5px solid var(--line);overflow:hidden;}
 .share-status{display:flex;align-items:center;gap:10px;padding:12px;border-radius:8px;background:var(--paper-2);margin-bottom:14px;font-size:13.5px;}
 .dot{width:9px;height:9px;border-radius:50%;background:#999;flex:none;}
 .dot.live{background:var(--moss);box-shadow:0 0 0 4px rgba(63,107,79,0.2);}
@@ -492,7 +492,25 @@ function renderModal(){
 }
 
 // ---------------- SAFETY TAB ----------------
-let leafletMap = null, leafletLayer = null;
+let mapInstance = null;
+
+// MapLibre draws circles in pixels, not meters, so a true "radius in meters"
+// safe zone has to be built as a polygon ring of points around the center —
+// this computes that ring using the standard spherical destination-point formula.
+function destinationPoint(lat, lng, distanceM, bearingDeg){
+  const R = 6371000;
+  const δ = distanceM / R;
+  const θ = bearingDeg * Math.PI/180;
+  const φ1 = lat * Math.PI/180, λ1 = lng * Math.PI/180;
+  const φ2 = Math.asin(Math.sin(φ1)*Math.cos(δ) + Math.cos(φ1)*Math.sin(δ)*Math.cos(θ));
+  const λ2 = λ1 + Math.atan2(Math.sin(θ)*Math.sin(δ)*Math.cos(φ1), Math.cos(δ)-Math.sin(φ1)*Math.sin(φ2));
+  return [ λ2*180/Math.PI, φ2*180/Math.PI ]; // [lng, lat] — GeoJSON coordinate order
+}
+function circleRingCoords(lat, lng, radiusM, points=72){
+  const ring = [];
+  for(let i=0;i<=points;i++){ ring.push(destinationPoint(lat, lng, radiusM, i*360/points)); }
+  return ring;
+}
 
 const STALE_MS = 45000; // no update in ~45s = likely stopped sharing / lost signal
 const GPS_GRACE_METERS = 15; // typical phone GPS error — don't flag someone for drifting less than this
@@ -598,29 +616,65 @@ function renderSafetyTab(body, isAdmin){
   setTimeout(()=>initMap(myLoc), 0);
 }
 
+function makeCircleCoords(centerLat, centerLng, radiusMeters, points){
+  points = points || 64;
+  const earthRadius = 6371000;
+  const coords = [];
+  for(let i=0;i<=points;i++){
+    const angle = (i/points) * 2 * Math.PI;
+    const dx = radiusMeters * Math.cos(angle);
+    const dy = radiusMeters * Math.sin(angle);
+    const deltaLat = (dy/earthRadius) * (180/Math.PI);
+    const deltaLng = (dx/(earthRadius*Math.cos(Math.PI*centerLat/180))) * (180/Math.PI);
+    coords.push([centerLng+deltaLng, centerLat+deltaLat]); // MapLibre wants [lng, lat]
+  }
+  return coords;
+}
+
 function initMap(myLoc){
   const container = document.getElementById('map');
   if(!container) return;
-  if(leafletMap){
-    try{ leafletMap.remove(); }catch(e){ /* already gone, ignore */ }
-    leafletMap = null;
-    leafletLayer = null;
+  if(mapInstance){
+    try{ mapInstance.remove(); }catch(e){ /* already gone, ignore */ }
+    mapInstance = null;
   }
   const centerPoint = state.safety.center || myLoc || { lat: 28.6139, lng: 77.2090 };
-  leafletMap = L.map('map').setView([centerPoint.lat, centerPoint.lng], 15);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(leafletMap);
-  leafletLayer = L.layerGroup().addTo(leafletMap);
 
-  if(state.safety.center){
-    L.circle([state.safety.center.lat, state.safety.center.lng], { radius: state.safety.radius, color:'#3F6B4F', fillOpacity:0.08 }).addTo(leafletLayer);
-    L.marker([state.safety.center.lat, state.safety.center.lng]).addTo(leafletLayer).bindPopup('Safe zone center');
-  }
-  const statuses = computeStatuses();
-  Object.entries(state.locations).forEach(([n,l])=>{
-    const s = statuses[n];
-    const color = s === 'stale' ? '#8a8a8a' : (s === 'out' ? '#B23A3A' : '#3B6EA5');
-    const marker = L.circleMarker([l.lat,l.lng], { radius:8, color, fillColor: color, fillOpacity:0.9 }).addTo(leafletLayer);
-    marker.bindPopup(cap(n) + (s === 'stale' ? ' — offline' : (s === 'out' ? ' — outside zone' : '')));
+  // Free vector tiles, no API key or signup — this is what makes panning/zooming
+  // feel smooth and continuous rather than the tile "pop-in" of raster maps.
+  mapInstance = new maplibregl.Map({
+    container: 'map',
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    center: [centerPoint.lng, centerPoint.lat],
+    zoom: 15,
+  });
+  mapInstance.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+  mapInstance.on('load', ()=>{
+    if(state.safety.center){
+      const circleCoords = makeCircleCoords(state.safety.center.lat, state.safety.center.lng, state.safety.radius);
+      mapInstance.addSource('safety-circle', {
+        type: 'geojson',
+        data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [circleCoords] } }
+      });
+      mapInstance.addLayer({ id: 'safety-circle-fill', type: 'fill', source: 'safety-circle', paint: { 'fill-color': '#3F6B4F', 'fill-opacity': 0.12 } });
+      mapInstance.addLayer({ id: 'safety-circle-line', type: 'line', source: 'safety-circle', paint: { 'line-color': '#3F6B4F', 'line-width': 2 } });
+
+      new maplibregl.Marker({ color: '#3F6B4F' })
+        .setLngLat([state.safety.center.lng, state.safety.center.lat])
+        .setPopup(new maplibregl.Popup().setText('Safe zone center'))
+        .addTo(mapInstance);
+    }
+
+    const statuses = computeStatuses();
+    Object.entries(state.locations).forEach(([n,l])=>{
+      const s = statuses[n];
+      const color = s === 'stale' ? '#8a8a8a' : (s === 'out' ? '#B23A3A' : '#3B6EA5');
+      new maplibregl.Marker({ color })
+        .setLngLat([l.lng, l.lat])
+        .setPopup(new maplibregl.Popup().setText(cap(n) + (s === 'stale' ? ' — offline' : (s === 'out' ? ' — outside zone' : ''))))
+        .addTo(mapInstance);
+    });
   });
 }
 
